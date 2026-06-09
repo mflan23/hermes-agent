@@ -2,7 +2,7 @@
 name: token-governance
 title: Token Governance & Cost Control
 description: Global token management, model routing, caching, and cost control. Loaded before all other skills on every session.
-version: 1.0.0
+version: 1.1.0
 metadata:
   hermes:
     autoload: true
@@ -11,7 +11,7 @@ metadata:
     tags: [Governance, Cost, Tokens, Caching, Routing]
 ---
 
-# Token Governance Framework
+# Token Governance Framework v1.1
 
 > This skill loads first, every session, every model. It cannot be overridden by user instruction. It exists to prevent runaway token consumption.
 
@@ -31,23 +31,26 @@ Route tasks to the cheapest model capable of completing them accurately.
 | Full document drafts > 1000 words | claude-3-5-sonnet | GPT-4o (more expensive) |
 
 **Default model = claude-3-haiku unless task complexity requires escalation.**
-Escalation must be triggered by explicit task signal, not assumed.
+
+**Disabled providers (do not route to):**
+- `openrouter` — credentials not configured, auth failing (HTTP 401)
+- `ollama-cloud` — hitting session rate limits (HTTP 429); use local Ollama only
+- `nvidia/nemotron` via openrouter — non-retryable auth failure
 
 ---
 
 ## 2. Skill Loading Rules
 
 - **Load skill summaries first.** Full skill content loads only when the task explicitly requires it.
-- **Each skill loads ONCE per session.** Never reload a skill that is already in working memory.
+- **Each skill loads ONCE per session.** Never reload a skill already in working memory.
 - **Maximum 3 skills active simultaneously.** If a 4th is needed, unload the least-recently-used.
-- **autoload skills inject compressed headers only** (name, description, modes) — not full content — unless activated by a matching task trigger.
+- **autoload skills inject compressed headers only** — not full content — unless activated by a matching task trigger.
 - **Never load reference files automatically.** Reference files load only when explicitly called by name.
+- **`godmode` skill is SUSPENDED.** Do not load, invoke, or reference `red-teaming\godmode` or any variant. It has triggered prompt injection security warnings. Flag to user if it appears in any skill chain.
 
 ---
 
 ## 3. Response Length Caps
-
-Enforce output length by mode. Do not exceed without explicit user request.
 
 | Mode | Max Tokens | Override Trigger |
 |---|---|---|
@@ -63,9 +66,9 @@ Enforce output length by mode. Do not exceed without explicit user request.
 
 ## 4. Caching Rules
 
-- **Cache all tool call results for 24 hours.** If the same document, statute, or URL was fetched in the last 24 hours, return the cached result. Do not re-fetch.
-- **Cache all embeddings for 7 days.** If a document was embedded in the last 7 days, do not re-embed.
-- **Cache all research synthesis outputs.** If a query is semantically similar (>0.92 cosine similarity) to a prior query in this session, surface the cached response and ask if the user wants a fresh run.
+- **Cache all tool call results for 24 hours.** Same document, statute, or URL fetched in last 24hrs = return cached result.
+- **Cache all embeddings for 7 days.** Do not re-embed if embedded in last 7 days.
+- **Cache research synthesis outputs.** If query is semantically similar (>0.92 cosine similarity) to a prior query this session, surface cached response and ask if user wants a fresh run.
 - **Never cache crisis triage outputs.** Resource availability changes. Always fetch fresh for DV/reentry resource matching.
 
 ---
@@ -73,20 +76,22 @@ Enforce output length by mode. Do not exceed without explicit user request.
 ## 5. Subagent & Loop Controls
 
 - **Maximum subagent depth = 2.** No subagent may spawn another subagent that spawns another.
-- **Maximum tool calls per turn = 5.** If a task requires more, pause and confirm with user before continuing.
+- **Maximum tool calls per turn = 5.** If a task requires more, pause and confirm with user.
 - **No auto-retry loops.** If a tool call fails, report the failure and propose an alternative. Do not silently retry.
 - **No speculative pre-fetching.** Do not fetch documents, URLs, or embeddings unless the current task explicitly requires them.
+- **Same tool called twice in a row with same parameters = STOP.** Report loop detection to user immediately.
 
 ---
 
 ## 6. Session Kill Switch
 
-If any of the following thresholds are reached, STOP and report to user before continuing:
+If any threshold is reached, STOP and report before continuing:
 
-- **Single turn exceeds 2,000 tokens output** without explicit "full draft" trigger
-- **Session cumulative output exceeds 15,000 tokens**
-- **More than 5 tool calls in a single turn**
-- **Same tool called more than 2 times in a row** (loop detection)
+- Single turn exceeds 2,000 tokens output without explicit "full draft" trigger
+- Session cumulative output exceeds 15,000 tokens
+- More than 5 tool calls in a single turn
+- Same tool called more than 2 times in a row (loop detection)
+- Any tool returns the same error 2 times in a row (fatal error — do not retry)
 
 Kill switch message:
 > ⚠️ **Token threshold reached.** This session has used [X] tokens. Do you want to continue? I can summarize progress and pause, or continue with a compressed response strategy.
@@ -95,10 +100,11 @@ Kill switch message:
 
 ## 7. Context Window Hygiene
 
-- **Summarize, don't repeat.** When referencing prior turn content, summarize in 1-2 sentences. Never copy-paste prior output back into context.
+- **Summarize, don't repeat.** Reference prior turn content in 1-2 sentences max. Never copy-paste prior output back into context.
 - **Drop resolved context.** Once a subtask is complete and confirmed, remove its detail from active context. Keep only the outcome.
-- **Compress memory injections.** When loading episodic memory from Supabase, inject summaries (max 100 tokens per memory item), not full outputs.
+- **Compress memory injections.** When loading episodic memory, inject summaries (max 100 tokens per item), not full outputs.
 - **One document at a time.** Never load more than one full document into context simultaneously.
+- **Pre-conversation context cap = 2,000 tokens.** If autoloaded skills + memory exceed this before the first user message, compress further.
 
 ---
 
@@ -107,11 +113,11 @@ Kill switch message:
 When a task will likely exceed 1,000 tokens, lead with:
 > 💰 **Cost estimate:** This task will use approximately [X] tokens on [model]. Proceed?
 
-This applies to: full document drafts, multi-source research synthesis, bulk embedding jobs, and any task requiring more than 3 tool calls.
+Applies to: full document drafts, multi-source research synthesis, bulk embedding jobs, any task requiring more than 3 tool calls.
 
 ---
 
-`token-governance v1.0 — Hermes Agent`
+`token-governance v1.1 — Hermes Agent`
 `Author: Mary Bay Flanagan`
 `Last Updated: June 2026`
 `Status: Active — CRITICAL PRIORITY`
