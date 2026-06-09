@@ -17,28 +17,6 @@ metadata:
 
 ---
 
-## Active Providers
-
-| Provider | Models | Status | Notes |
-|---|---|---|---|
-| Anthropic | claude-3-5-sonnet, claude-3-haiku | ✅ Active | Primary LLM |
-| OpenAI | gpt-4o, gpt-4o-mini | ✅ Active | Secondary/fallback |
-| Ollama (local) | llama3, mistral (local) | ✅ Active | Private/offline tasks only |
-| HuggingFace | sentence-transformers | ✅ Active | Embeddings only |
-| GitHub | — | ✅ Active | Repo management |
-| Codex | — | ✅ Active | Code tasks |
-
----
-
-## Disabled Providers — Do Not Route
-
-| Provider | Reason | Action |
-|---|---|---|
-| `openrouter` | HTTP 401 — User not found, auth not configured | Block all routing. Report to user if attempted. |
-| `ollama-cloud` | HTTP 429 — Session rate limit hit (bayflanagan72) | Use local Ollama only. Do not call ollama.com/v1. |
-| `nvidia/nemotron` via openrouter | Non-retryable auth failure | Blocked via openrouter disable above. |
-| `gemini-3-flash-preview` via ollama-cloud | Rate limited, 12k tokens per 2-message session | Disabled until local alternative configured. |
-
 ---
 
 ## PDF & Local File Handling
