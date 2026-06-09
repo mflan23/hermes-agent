@@ -5,9 +5,9 @@
 
 ## Overview
 
-Hermes is a LangChain/LangGraph-orchestrated AI agent running on a Vertex AI (Gemini) backbone, with Supabase as the primary data and memory layer. He is designed for asynchronous, multi-domain task execution — routing inputs through specialized functional modules and returning structured, cited, audience-calibrated outputs.
+Hermes is a LangChain/LangGraph-orchestrated AI agent running on an Anthropic Claude backbone (with OpenAI and Hugging Face as secondary providers), backed by Supabase as the primary data and memory layer. He is designed for asynchronous, multi-domain task execution — routing inputs through specialized functional modules and returning structured, cited, audience-calibrated outputs.
 
-This document describes the system architecture, agent flow, memory design, and deployment model.
+> **Stack Note:** Hermes runs on an open, privacy-respecting stack. No Google Cloud Platform services are used — no Vertex AI, no BigQuery, no Cloud Run, no GCS.
 
 ---
 
@@ -38,9 +38,22 @@ This document describes the system architecture, agent flow, memory design, and 
                              ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                     OUTPUT LAYER                             │
-│   (Structured text · Notion page · Google Doc · JSON · PDF) │
+│   (Structured text · Notion page · Markdown · JSON · PDF)   │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## LLM Provider Strategy
+
+Hermes uses a tiered model routing strategy:
+
+| Tier | Provider | Models | Use Case |
+|---|---|---|---|
+| **Primary** | Anthropic | claude-3-5-sonnet, claude-3-haiku | Complex reasoning, legal analysis, advocacy drafting |
+| **Secondary** | OpenAI | gpt-4o, gpt-4o-mini | Fallback drafting, formatting, structured output |
+| **Embeddings** | Hugging Face | sentence-transformers, BAAI/bge | Semantic search, pgvector ingestion, document clustering |
+| **Local / Private** | Ollama | llama3, mistral (local) | Fully offline processing for sensitive case data |
 
 ---
 
@@ -78,7 +91,7 @@ hermes-agent/
     ├── legal/          # OCGA lookup, case law, OCR, document parsing
     ├── research/       # Literature search, citation, synthesis, drafting
     ├── advocacy/       # Brief writing, testimony, grant narratives
-    ├── data/           # Supabase, Notion, GitHub, BigQuery routing
+    ├── data/           # Supabase, Notion, GitHub, AWS routing
     └── triage/         # Resource matching, intake, referral mapping
 ```
 
@@ -101,7 +114,7 @@ Hermes uses a three-tier memory model:
 Conversation history within the active session. Managed by LangGraph's state graph. Cleared on session end unless explicitly saved.
 
 ### Tier 2 — Episodic Memory (Supabase)
-Persistent storage of past tasks, outputs, and user preferences. Queried via semantic similarity using pgvector embeddings.
+Persistent storage of past tasks, outputs, and user preferences. Queried via semantic similarity using Hugging Face embeddings + pgvector.
 
 ```sql
 -- Core memory table
@@ -118,8 +131,20 @@ CREATE TABLE hermes_memory (
 );
 ```
 
-### Tier 3 — Knowledge Base (Supabase + GCS)
-Static and semi-static reference data: legal resource directories, statute snapshots, curated DV/reentry resource lists, research corpora. Indexed for RAG retrieval.
+### Tier 3 — Knowledge Base (Supabase + AWS S3 + Cloudflare R2)
+Static and semi-static reference data: legal resource directories, statute snapshots, curated DV/reentry resource lists, research corpora, and NotebookLM exports. Indexed for RAG retrieval via Hugging Face sentence-transformer embeddings.
+
+---
+
+## Dataset & Corpus Ingestion
+
+Hermes treats the following as structured, citable datasets:
+
+- **NotebookLM exports** — Markdown/JSON exports from curated research notebooks, ingested into the knowledge base and indexed for RAG retrieval.
+- **Hugging Face Datasets** — Open datasets relevant to criminal justice, legal NLP, and social services, pulled via the `datasets` Python library.
+- **Curated static datasets** — OCGA statute snapshots, DV resource directories, reentry program lists, stored in AWS S3 / Cloudflare R2.
+
+All ingested datasets are versioned, timestamped, and stored with source metadata in Supabase.
 
 ---
 
@@ -143,10 +168,15 @@ This layered approach keeps the base prompt lean while allowing rich context inj
 
 | Component | Platform | Notes |
 |---|---|---|
-| Agent runtime | Google Cloud Run | Serverless, auto-scaling |
-| LLM backbone | Vertex AI (Gemini 1.5 Pro / Flash) | Pro for complex tasks, Flash for speed |
+| Agent runtime | Railway / Render | Primary backend and agent API hosting |
+| Serverless functions | AWS Lambda | Pipeline triggers, async task execution |
+| LLM — Primary | Anthropic Claude API | Sonnet for complex tasks, Haiku for speed |
+| LLM — Secondary | OpenAI API | gpt-4o / gpt-4o-mini fallback |
+| Embeddings | Hugging Face Inference API | sentence-transformers for pgvector ingestion |
+| Local LLM fallback | Ollama | Fully offline for sensitive/private tasks |
 | Database / memory | Supabase (PostgreSQL + pgvector) | Primary data layer |
-| File storage | Google Cloud Storage | PDFs, OCR outputs, exports |
+| File storage — Primary | AWS S3 | PDFs, datasets, OCR outputs |
+| File storage — Edge | Cloudflare R2 | Exports, fast-access files (S3-compatible) |
 | CI/CD | GitHub Actions | Auto-deploy on push to main |
 | Frontend (optional) | Lovable / Firebase | User-facing chat or intake interface |
 | Dev environment | Cursor IDE / VS Code | Local development |
@@ -157,8 +187,9 @@ This layered approach keeps the base prompt lean while allowing rich context inj
 
 - **Row-Level Security (RLS)** enforced on all Supabase tables.
 - **No PII transmitted to external APIs** without explicit user authorization.
-- **Service accounts scoped minimally** — each GCP service account has only the permissions its module requires.
-- **Secrets managed via** Google Secret Manager (never hardcoded).
+- **No Google Cloud Platform.** Zero dependency on Google infrastructure.
+- **Local fallback via Ollama** for tasks requiring fully private, offline processing.
+- **Secrets managed via** environment variables + Supabase Vault + AWS Secrets Manager (never hardcoded).
 - **Audit logging** on all memory writes and tool calls.
 
 ---
@@ -168,8 +199,10 @@ This layered approach keeps the base prompt lean while allowing rich context inj
 - [ ] `modules/legal/` — OCGA RAG pipeline (v1)
 - [ ] `modules/triage/` — Georgia DV resource matcher (v1)
 - [ ] Memory layer schema and Supabase setup
+- [ ] Hugging Face embeddings ingestion pipeline
+- [ ] NotebookLM export ingestion pipeline
 - [ ] LangGraph agent loop scaffold
-- [ ] Google Cloud Run deployment config
+- [ ] Railway + AWS Lambda deployment config
 - [ ] GitHub Actions CI/CD pipeline
 - [ ] Lovable frontend for intake interface
 - [ ] `modules/research/` — Academic synthesis pipeline (v1)
@@ -177,7 +210,7 @@ This layered approach keeps the base prompt lean while allowing rich context inj
 
 ---
 
-`ARCHITECTURE.md v1.0 — Hermes Agent`  
+`ARCHITECTURE.md v1.2 — Hermes Agent`  
 `Author: Mary Bay Flanagan`  
 `Last Updated: June 2026`  
 `Status: Active`
